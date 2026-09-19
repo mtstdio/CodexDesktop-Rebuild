@@ -120,3 +120,45 @@ jobs:
             out/make/rpm/**/*.rpm
             out/make/zip/**/*.zip
           if-no-files-found: error
+
+  release:
+    needs: [build-mac, build-windows, build-linux]
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Codex ${{ steps.version.outputs.version }}
+          body: |
+            ## Codex Desktop Rebuild
+            - Built from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`
+            - Features: Injected Local HTTP/SSE Session Control Server (`POST /api/threads/:id/turn`)
+            - Multi-instance support with Cockpit Tools (`/Users/o/.antigravity_cockpit/instances`)
+            - Auto-approval (`approvalPolicy: never`) for unattended automation
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
