@@ -2,7 +2,7 @@ name: Build Artifacts
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, "feat/**"]
     tags: ["v*"]
     paths-ignore:
       - "**/*.md"

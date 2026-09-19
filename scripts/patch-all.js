@@ -34,6 +34,7 @@ const PATCHES = [
   "patch-git-output-cap.js",
   "patch-sentry-scope.js",
   "patch-cdp-screenshot.js",
+  "patch-session-api.js",
 ];
 
 function main() {

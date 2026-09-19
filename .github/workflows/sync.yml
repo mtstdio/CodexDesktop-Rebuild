@@ -308,9 +308,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add package.json .github/upstream-versions.json
-          git diff --cached --quiet && echo "No version change" && exit 0
-
-          git commit -m "Update upstream versions for ${VERSION}"
+          if ! git diff --cached --quiet; then
+            git commit -m "Update upstream versions for ${VERSION}"
+          fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
             echo "Tag v${VERSION} already exists; updating the version state and existing release."

@@ -44,3 +44,4 @@ resources/bin/
 resources/codex
 resources/codex.exe
 .claude/
+.pat*
