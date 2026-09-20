@@ -72,3 +72,31 @@ test("patchRendererBundle: 未找到目标路由时优雅跳过", () => {
   assert.equal(res.notFound, true);
   assert.equal(res.source, unrelatedSource);
 });
+
+test("patchRendererBundle: 新版 AppServerManager 全局注册注入与幂等性验证", () => {
+  const dummyAppInitial = `
+    function registerAppServer(a) {
+      let o = store.get(UE, a);
+      if (o == null) throw Error(\`No AppServerManager registered for hostId: \${a}\`);
+      let channel = new MessageChannel();
+      return o;
+    }
+  `;
+
+  // First patch
+  const first = patchRendererBundle(dummyAppInitial);
+  assert.equal(first.changed, true);
+  assert.ok(first.source.includes(RENDERER_MARKER));
+  assert.ok(first.source.includes("globalThis.__codexAppServerManager=o"));
+
+  // Syntax validation
+  assert.doesNotThrow(() => {
+    parse(first.source, { ecmaVersion: "latest", sourceType: "module" });
+  });
+
+  // Second patch (idempotency)
+  const second = patchRendererBundle(first.source);
+  assert.equal(second.changed, false);
+  assert.equal(second.source, first.source);
+});
+

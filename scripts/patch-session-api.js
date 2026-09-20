@@ -355,10 +355,21 @@ function patchMainEntry(source) {
 // ─── Layer 2: Renderer Process Injection ────────────────────────
 
 const ROUTE_PATTERN = /(["`])unarchive-conversation\1\s*:\s*(\w+)\(async\s*\(\s*(\w+)\s*,\s*\{\s*conversationId\s*:\s*(\w+)\s*\}\s*\)\s*=>\s*\{\s*await\s+\3\.unarchiveConversation\(\4\)\s*;?\s*\}\)/;
+const APPMANAGER_PATTERN = /if\s*\(\s*(\w+)\s*==\s*null\s*\)\s*throw\s+(?:new\s+)?Error\s*\(\s*[`'"]No AppServerManager registered for hostId:\s*\$\{\s*(\w+)\s*\}\s*[`'"]\s*\)\s*;/;
 
 function patchRendererBundle(source) {
   if (source.includes(RENDERER_MARKER)) {
     return { changed: false, source };
+  }
+
+  const appManagerMatch = source.match(APPMANAGER_PATTERN);
+  if (appManagerMatch) {
+    const mgrVar = appManagerMatch[1];
+    const anchorEnd = appManagerMatch.index + appManagerMatch[0].length;
+    const inject = `;${RENDERER_MARKER}try{globalThis.__codexAppServerManager=${mgrVar}}catch(_){};`;
+    const next = source.slice(0, anchorEnd) + inject + source.slice(anchorEnd);
+    acorn.parse(next, { ecmaVersion: "latest", sourceType: "module" });
+    return { changed: true, source: next };
   }
 
   const match = source.match(ROUTE_PATTERN);
@@ -385,7 +396,7 @@ function patchRendererBundle(source) {
   ].join("");
 
   const next = source.slice(0, anchorEnd) + inject + source.slice(anchorEnd);
-  acorn.parse(next, { ecmaVersion: 2022, sourceType: "module" });
+  acorn.parse(next, { ecmaVersion: "latest", sourceType: "module" });
   return { changed: true, source: next };
 }
 
@@ -422,29 +433,29 @@ function main() {
   }
 
   // 2. Patch Renderer Bundles
-  console.log("\n== [layer 2] Renderer App-Main Routes ==");
-  const appMainBundles = locateBundles({
+  console.log("\n== [layer 2] Renderer App Control Hooks ==");
+  const rendererBundles = locateBundles({
     dir: "assets",
-    pattern: /^app-main-.*\.js$/,
+    pattern: /^app-(?:main|initial)-.*\.js$/,
     ...(platform ? { platform } : {}),
   });
 
-  if (appMainBundles.length === 0) {
-    console.log("  [skip] No app-main bundle found");
+  if (rendererBundles.length === 0) {
+    console.log("  [skip] No renderer bundle found");
   } else {
-    for (const bundle of appMainBundles) {
+    for (const bundle of rendererBundles) {
       const code = fs.readFileSync(bundle.path, "utf-8");
       try {
         const { changed, source, notFound } = patchRendererBundle(code);
         if (notFound) {
-          console.log(`  [!] ${relPath(bundle.path)}: unarchive-conversation route not found, skipping`);
+          console.log(`  [--] ${relPath(bundle.path)}: no control hook anchor here, skipping`);
         } else if (!changed) {
           console.log(`  [ok] ${relPath(bundle.path)}: already patched`);
         } else if (isCheck) {
-          console.log(`  [?] ${relPath(bundle.path)}: would inject control routes`);
+          console.log(`  [?] ${relPath(bundle.path)}: would inject control hooks`);
         } else {
           fs.writeFileSync(bundle.path, source, "utf-8");
-          console.log(`  [ok] ${relPath(bundle.path)}: injected control routes`);
+          console.log(`  [ok] ${relPath(bundle.path)}: injected control hooks`);
         }
       } catch (e) {
         console.error(`  [x] ${relPath(bundle.path)}: patch failed (${e.message})`);
@@ -459,6 +470,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  APPMANAGER_PATTERN,
   MAIN_MARKER,
   RENDERER_MARKER,
   patchMainEntry,

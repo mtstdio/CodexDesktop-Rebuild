@@ -575,28 +575,34 @@ function patchSidebarSource(source) {
 }
 
 function findTargets(platform) {
-  const openMenuTargets = locateBundles({
+  const bundles = locateBundles({
     dir: "assets",
-    pattern: /^app-initial-.*\.js$/,
+    pattern: /^app-(?:initial|primary)-.*\.js$/,
     ...(platform ? { platform } : {}),
-  })
-    .map((target) => ({
-      ...target,
-      source: fs.readFileSync(target.path, "utf-8"),
-    }))
-    .map((target) => ({ ...target, patchKind: "open-menu" }));
-  const sidebarTargets = locateBundles({
-    dir: "assets",
-    pattern: /^app-primary-.*\.js$/,
-    ...(platform ? { platform } : {}),
-  })
-    .map((target) => ({
-      ...target,
-      source: fs.readFileSync(target.path, "utf-8"),
-    }))
-    .map((target) => ({ ...target, patchKind: "sidebar" }));
+  }).map((target) => ({
+    ...target,
+    source: fs.readFileSync(target.path, "utf-8"),
+  }));
 
-  return [...openMenuTargets, ...sidebarTargets];
+  const targets = [];
+  for (const bundle of bundles) {
+    if (
+      PATCHABLE_SIGNATURES.every((sig) => bundle.source.includes(sig)) ||
+      hasNativeDirectAction(bundle.source) ||
+      bundle.source.includes(MARKER)
+    ) {
+      targets.push({ ...bundle, patchKind: "open-menu" });
+    }
+    if (
+      SIDEBAR_PATCHABLE_SIGNATURES.every((sig) => bundle.source.includes(sig)) ||
+      hasNativeDirectAction(bundle.source) ||
+      bundle.source.includes(SIDEBAR_MARKER)
+    ) {
+      targets.push({ ...bundle, patchKind: "sidebar" });
+    }
+  }
+
+  return targets;
 }
 
 function main() {
@@ -614,10 +620,11 @@ function main() {
   let failed = 0;
   for (const target of targets) {
     const label = relPath(target.path);
+    const source = fs.readFileSync(target.path, "utf-8");
     const result =
       target.patchKind === "sidebar"
-        ? patchSidebarSource(target.source)
-        : patchSource(target.source);
+        ? patchSidebarSource(source)
+        : patchSource(source);
 
     if (result.status === "native") {
       console.log(
