@@ -137,6 +137,36 @@ const MAIN_INJECT = `${MAIN_MARKER}
         return res.end(JSON.stringify({ status: "ok", pid: process.pid, port: activePort }));
       }
 
+      const threadGetMatch = pathname.match(/^\\/api\\/threads\\/([^/]+)$/);
+      if (req.method === "GET" && threadGetMatch) {
+        const threadId = decodeURIComponent(threadGetMatch[1]);
+        const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+        if (!win) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "Codex window not available" }));
+        }
+        try {
+          const detail = await win.webContents.executeJavaScript(\`
+            (async () => {
+              if (!globalThis.__codexAppServerManager) return null;
+              const readRes = await globalThis.__codexAppServerManager.sendRequest("thread/read", {
+                threadId: \${JSON.stringify(threadId)},
+                includeTurns: true
+              }).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
+              const itemsRes = await globalThis.__codexAppServerManager.sendRequest("thread/items/list", {
+                threadId: \${JSON.stringify(threadId)}
+              }).catch(() => null);
+              return { readRes, itemsRes };
+            })()
+          \`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: true, data: detail }));
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: String(e) }));
+        }
+      }
+
       const turnMatch = pathname.match(/^\\/api\\/threads\\/([^/]+)\\/turn$/);
       if (req.method === "POST" && turnMatch) {
         const threadId = decodeURIComponent(turnMatch[1]);
@@ -188,8 +218,10 @@ const MAIN_INJECT = `${MAIN_MARKER}
 
             let lastItemCount = 0;
             let isDone = false;
+            let lastActivityTime = Date.now();
+            const STALL_TIMEOUT_MS = 20000;
             let pollAttempts = 0;
-            const maxPollAttempts = 1200;
+            const maxPollAttempts = 600;
 
             while (!isDone && !aborted && pollAttempts < maxPollAttempts) {
               await new Promise((r) => setTimeout(r, 500));
@@ -219,13 +251,52 @@ const MAIN_INJECT = `${MAIN_MARKER}
                   res.write(\`data: \${JSON.stringify({ type: "item", item: items[i] })}\\n\\n\`);
                 }
                 lastItemCount = items.length;
+                lastActivityTime = Date.now();
               }
 
               const turns = (pollData.readRes && pollData.readRes.thread && pollData.readRes.thread.turns) || [];
               const currentTurn = turns.find((t) => t.id === turnId) || (pollData.readRes && pollData.readRes.thread && pollData.readRes.thread.currentTurn);
-              if (currentTurn && ["completed", "failed", "cancelled", "interrupted"].includes(currentTurn.status)) {
+
+              // 1. 显式捕获 Turn 级错误（如 429 Too Many Requests, exceeded retry limit 等）
+              if (currentTurn && currentTurn.error) {
+                isDone = true;
+                res.write(\`data: \${JSON.stringify({
+                  type: "turn_error",
+                  error: currentTurn.error,
+                  message: currentTurn.error.message || String(currentTurn.error),
+                  turn: currentTurn
+                })}\\n\\n\`);
+                break;
+              }
+
+              // 2. 检查全局或 thread 级错误
+              if (pollData.readRes && pollData.readRes.thread && pollData.readRes.thread.error) {
+                isDone = true;
+                res.write(\`data: \${JSON.stringify({
+                  type: "turn_error",
+                  error: pollData.readRes.thread.error,
+                  message: pollData.readRes.thread.error.message || String(pollData.readRes.thread.error),
+                  turn: currentTurn
+                })}\\n\\n\`);
+                break;
+              }
+
+              // 3. 终态完成判定
+              if (currentTurn && ["completed", "failed", "cancelled", "interrupted", "error"].includes(currentTurn.status)) {
                 isDone = true;
                 res.write(\`data: \${JSON.stringify({ type: "turn_completed", status: currentTurn.status, turn: currentTurn })}\\n\\n\`);
+                break;
+              }
+
+              // 4. 静默超时检测（超时无新 item 且无活跃状态变迁）
+              if (Date.now() - lastActivityTime > STALL_TIMEOUT_MS) {
+                isDone = true;
+                res.write(\`data: \${JSON.stringify({
+                  type: "turn_stalled",
+                  message: \`Turn stalled: no output or status change for \${STALL_TIMEOUT_MS / 1000}s\`,
+                  turn: currentTurn
+                })}\\n\\n\`);
+                break;
               }
             }
 

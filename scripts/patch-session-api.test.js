@@ -23,6 +23,10 @@ test("patchMainEntry: 主进程代码注入与幂等性验证", () => {
   assert.ok(first.source.includes("CODEX_CONTROL_PORT"));
   assert.ok(first.source.includes("EADDRINUSE"));
   assert.ok(first.source.includes("control-port.json"));
+  assert.ok(first.source.includes("threadGetMatch"));
+  assert.ok(first.source.includes("turn_error"));
+  assert.ok(first.source.includes("turn_stalled"));
+  assert.ok(first.source.includes("STALL_TIMEOUT_MS"));
 
   // Syntax validation
   assert.doesNotThrow(() => {
